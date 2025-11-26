@@ -1,0 +1,2 @@
+fitness,energy,latency,cost,qos,resource_utilization,missed_deadlines,completion_time
+"[0.5, 0.5, 0.5]",35170.12,56.670805555555546,26,1.0,0.9,0,112.22222222222223
