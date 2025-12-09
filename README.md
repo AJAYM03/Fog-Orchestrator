@@ -12,7 +12,7 @@ We have implemented **9 distinctive scheduling algorithms** for rigorous compari
 
 ### Proposed Methods
 * **QIGA (Quantum-Inspired Genetic Algorithm):** Uses adaptive quantum rotation gates ($\theta$) to explore the search space.
-* **MOHEFT (NSGA-II):** A multi-objective genetic algorithm using non-dominated sorting. (Currently the efficiency champion).
+* **MOHEFT (NSGA-II):** A multi-objective genetic algorithm using non-dominated sorting (Currently the efficiency champion).
 
 ### Metaheuristic Benchmarks
 * **GA (Genetic Algorithm):** Standard single-objective genetic algorithm (Scalarized fitness).
@@ -71,12 +71,12 @@ streamlit run dashboard.py
 
 **Workflow:**
 
-1.  Go to **Admin Controls**.
-2.  Select a Scenario (e.g., `Base_Case`) and click **Generate Dataset**.
-3.  Select scenarios to simulate and click **Run Simulation**.
-4.  Analyze the results in the interactive tabs.
+1. Go to **Admin Controls**.
+2. Select a Scenario (e.g., `Base_Case`) and click **Generate Dataset**.
+3. Select scenarios to simulate and click **Run Simulation**.
+4. Analyze the results in the interactive tabs.
 
------
+---
 
 ## 📊 Key Findings (Current Research Status)
 
@@ -84,7 +84,25 @@ streamlit run dashboard.py
 * **Discrete vs. Continuous:** Algorithms relying on discrete crossover (GA, MOHEFT) outperform those relying on continuous probability mapping (QIGA, PSO).
 * **Fog vs. Cloud:** In high-concurrency scenarios ($N > 150$ users), the distributed Fog layer achieves lower latency than the centralized Cloud due to parallel processing capability.
 
------
+---
+
+## 👏 Acknowledgments & Credits
+
+This project builds upon the work of multiple open-source contributions:
+
+1. **Original QIGA Framework:**
+   * Base architecture and QIGA algorithm logic derived from *Galavani et al.* [Dynamic Scheduling in Mobile Edge Computing](https://www.google.com/search?q=https://doi.org/10.1109/CSICC65765.2025.10967435).
+   * Original Repo: [Anonymous0-0paper/QIGA](https://github.com/Anonymous0-0paper/QIGA).
+
+2. **Metaheuristic Benchmarks (GA, PSO, DE):**
+   * The implementations of Genetic Algorithm, Particle Swarm Optimization, and Differential Evolution were adapted from the **Vehicular Fog Computing** repository.
+   * Source: [ahujatarang/vehicular-fog-computing](https://www.google.com/search?q=https://github.com/ahujatarang/vehicular-fog-computing).
+
+3. **Modifications:**
+   * We have significantly modified the original codebase to include a physics-based energy model ($P \times t$), a prediction noise module for robustness testing, and a Streamlit-based Digital Twin dashboard.
+   * The MOHEFT algorithm was upgraded from a heuristic to a full NSGA-II evolutionary algorithm.
+
+---
 
 ## 📜 Citation
 
@@ -98,4 +116,3 @@ If you use the QIGA implementation from this repo, please cite the original pape
   doi={10.1109/CSICC65765.2025.10967435}
 }
 ```
-
