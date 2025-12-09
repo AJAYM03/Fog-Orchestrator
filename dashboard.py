@@ -18,7 +18,7 @@ st.set_page_config(layout="wide", page_title="Fog Scheduler Digital Twin")
 BASE_OUTPUT_DIR = "scheme/outputs"
 DATASET_DIR = "datasets"
 # Update this line at the top
-ALGORITHMS = ["QIGA", "MOHEFT", "GA", "PSO", "DE", "RR", "RA", "OE", "OC"]
+ALGORITHMS = ["HybridQIGA", "QIGA", "MOHEFT", "GA", "PSO", "DE", "RR", "RA", "OE", "OC"]
 try:
     from main import NUM_RUNS
 except ImportError:

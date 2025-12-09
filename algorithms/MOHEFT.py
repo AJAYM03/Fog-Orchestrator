@@ -1,5 +1,6 @@
 from config import *
 import random
+import copy
 
 class MOHEFT:
     def __init__(self, fitness, population_size, generation_count, data):
@@ -11,12 +12,60 @@ class MOHEFT:
         self.num_resources = self.data['EdgeServer'].count()
         self.gene_size = self.num_tasks * self.num_resources
 
+    # --- NSGA-II Logic (Missing in original) ---
+    def dominates(self, fitness1, fitness2):
+        return all(f1 <= f2 for f1, f2 in zip(fitness1, fitness2)) and any(f1 < f2 for f1, f2 in zip(fitness1, fitness2))
+
+    def non_dominated_sorting(self, population):
+        fronts = [[]]
+        for p in population:
+            p.domination_count = 0
+            p.dominated_set = []
+            for q in population:
+                if self.dominates(p.fitness, q.fitness):
+                    p.dominated_set.append(q)
+                elif self.dominates(q.fitness, p.fitness):
+                    p.domination_count += 1
+            if p.domination_count == 0:
+                p.rank = 0
+                fronts[0].append(p)
+        
+        i = 0
+        while len(fronts[i]) > 0:
+            next_front = []
+            for p in fronts[i]:
+                for q in p.dominated_set:
+                    q.domination_count -= 1
+                    if q.domination_count == 0:
+                        q.rank = i + 1
+                        next_front.append(q)
+            i += 1
+            fronts.append(next_front)
+        
+        if not fronts[-1]: fronts.pop()
+        return fronts
+
+    def calculate_crowding_distance(self, front):
+        if not front: return
+        num_objectives = len(front[0].fitness)
+        for p in front: p.crowding_distance = 0
+        
+        for m in range(num_objectives):
+            front.sort(key=lambda x: x.fitness[m])
+            front[0].crowding_distance = float('inf')
+            front[-1].crowding_distance = float('inf')
+            min_fit, max_fit = front[0].fitness[m], front[-1].fitness[m]
+            if max_fit == min_fit: continue
+            norm = max_fit - min_fit
+            for i in range(1, len(front) - 1):
+                front[i].crowding_distance += (front[i+1].fitness[m] - front[i-1].fitness[m]) / norm
+
+    # --- Core Methods ---
     def initialize_population(self):
         population = []
         for _ in range(self.population_size):
             individual = Individual()
             individual.CInd = []
-            # Correct One-Hot Initialization
             for _ in range(self.num_tasks):
                 task_gene = [0] * self.num_resources
                 chosen_server = random.randint(0, self.num_resources - 1)
@@ -26,43 +75,49 @@ class MOHEFT:
         return population
 
     def tournament_selection(self, population):
+        # Requires rank and crowding_distance to be set
         a, b = random.sample(population, 2)
+        if not hasattr(a, 'rank'): return a # Safety fallback
+        
         if a.rank < b.rank: return a
         elif b.rank < a.rank: return b
         return a if a.crowding_distance > b.crowding_distance else b
 
     def crossover(self, p1, p2):
+        # FIX: Task-Aware Crossover
         c1, c2 = Individual(), Individual()
-        pt = random.randint(1, self.gene_size - 2)
-        c1.CInd = p1.CInd[:pt] + p2.CInd[pt:]
-        c2.CInd = p2.CInd[:pt] + p1.CInd[pt:]
+        c1.CInd = []
+        c2.CInd = []
+        for i in range(self.num_tasks):
+            start, end = i * self.num_resources, (i + 1) * self.num_resources
+            if random.random() < 0.5:
+                c1.CInd.extend(p1.CInd[start:end])
+                c2.CInd.extend(p2.CInd[start:end])
+            else:
+                c1.CInd.extend(p2.CInd[start:end])
+                c2.CInd.extend(p1.CInd[start:end])
         return c1, c2
 
-    def mutation(self, ind):
-        if random.random() < 0.1:
-            idx = random.randint(0, self.gene_size - 1)
-            ind.CInd[idx] = 1 - ind.CInd[idx]
-        return ind
-
-    def non_dominated_sorting(self, population):
-        for p in population:
-            p.domination_count = 0
-            p.dominated_set = []
-            for q in population:
-                if all(x <= y for x, y in zip(p.fitness, q.fitness)) and any(x < y for x, y in zip(p.fitness, q.fitness)):
-                    p.dominated_set.append(q)
-                elif all(y <= x for x, y in zip(p.fitness, q.fitness)) and any(y < x for x, y in zip(p.fitness, q.fitness)):
-                    p.domination_count += 1
-            if p.domination_count == 0: p.rank = 0
-        return [p for p in population if p.rank == 0]
-
-    def select_best_population(self, combined_population):
-        combined_population.sort(key=lambda x: sum(x.fitness))
-        return combined_population[:self.population_size]
+    def mutation(self, individual):
+        # FIX: Task-Aware Mutation
+        new_genes = individual.CInd[:]
+        if random.random() < 0.2: # Higher mutation rate for MOHEFT
+            task_idx = random.randint(0, self.num_tasks - 1)
+            new_server = random.randint(0, self.num_resources - 1)
+            start = task_idx * self.num_resources
+            new_genes[start:start+self.num_resources] = [0] * self.num_resources
+            new_genes[start + new_server] = 1
+        individual.CInd = new_genes
+        return individual
 
     def run(self):
         population = self.initialize_population()
         population = self.fitness(population, self.data)
+        
+        # Initial Rank assignment
+        fronts = self.non_dominated_sorting(population)
+        for front in fronts: self.calculate_crowding_distance(front)
+
         for _ in range(self.generation_count):
             offspring = []
             while len(offspring) < self.population_size:
@@ -70,7 +125,21 @@ class MOHEFT:
                 p2 = self.tournament_selection(population)
                 c1, c2 = self.crossover(p1, p2)
                 offspring.extend([self.mutation(c1), self.mutation(c2)])
+            
             offspring = self.fitness(offspring, self.data)
             combined = population + offspring
-            population = self.select_best_population(combined)
+            
+            # FIX: Use NSGA-II selection (Rank + Crowding) instead of Sum(Fitness)
+            fronts = self.non_dominated_sorting(combined)
+            new_population = []
+            for front in fronts:
+                self.calculate_crowding_distance(front)
+                front.sort(key=lambda x: x.crowding_distance, reverse=True)
+                if len(new_population) + len(front) <= self.population_size:
+                    new_population.extend(front)
+                else:
+                    new_population.extend(front[:self.population_size - len(new_population)])
+                    break
+            population = new_population
+            
         return population

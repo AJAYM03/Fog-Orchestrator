@@ -4,7 +4,7 @@ import glob
 import re
 import argparse
 import json
-from algorithms import QIGA, MOHEFT, RR, RA, OE, OC, GA, PSO, DE # Added new ones
+from algorithms import QIGA, MOHEFT, RR, RA, OE, OC, GA, PSO, DE, HybridQIGA
 from config import *
 import pandas as pd
 
@@ -158,6 +158,13 @@ if __name__ == "__main__":
             DE_pop = DE_alg.run()
             save_population(scenario_name, run_id, "DE", DE_pop, data)
             
+            print(f'Running HybridQIGA...')
+            HybridQIGA_alg = HybridQIGA.HybridQIGA(fitness, K_POP_SIZE, K_GEN_SIZE, data)
+            HybridQIGA_pop = HybridQIGA_alg.run()
+            save_population(scenario_name, run_id, "HybridQIGA", HybridQIGA_pop, data)
+            
             print(f"--- Completed Run {run_id}/{NUM_RUNS} ---")
+
+            
 
     print("\nAll requested simulations completed.")
