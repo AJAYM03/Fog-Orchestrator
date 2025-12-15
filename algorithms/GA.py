@@ -9,9 +9,12 @@ class GA:
         self.population_size = population_size
         self.generation_count = generation_count
         self.data = data
-        self.num_tasks = self.data['User'].count()
+        
+        # Robust Task Counting
+        self.all_tasks = get_all_tasks(data)
+        self.num_tasks = len(self.all_tasks)
         self.num_resources = self.data['EdgeServer'].count()
-        # Gene size is still total bits, but we manage them by task blocks
+        
         self.gene_size = self.num_tasks * self.num_resources
 
     # --- Multi-Objective Helpers (NSGA-II Logic) ---
@@ -102,8 +105,7 @@ class GA:
         return best
 
     def crossover(self, p1, p2):
-        # FIX: Task-Aware Uniform Crossover
-        # We swap entire TASK blocks, not random bits
+        # Task-Aware Uniform Crossover
         c1, c2 = Individual(), Individual()
         c1.CInd = []
         c2.CInd = []
@@ -123,14 +125,15 @@ class GA:
         return c1, c2
 
     def mutation(self, individual):
-        # FIX: Task-Aware Mutation
-        # We pick a task and assign it to a new random server
-        mutation_rate = 1.0 / self.num_tasks # One expected mutation per individual
-        
-        # We need a copy to avoid mutating the elite parents directly if they are referenced
+        # Safety check for empty tasks
+        if self.num_tasks == 0:
+            return individual
+
+        # Task-Aware Mutation
+        mutation_rate = 1.0 / self.num_tasks
         new_genes = individual.CInd[:] 
         
-        if random.random() < 0.5: # 50% chance to mutate an individual
+        if random.random() < 0.5: 
             # Pick one random task to mutate
             task_idx = random.randint(0, self.num_tasks - 1)
             new_server = random.randint(0, self.num_resources - 1)
@@ -181,4 +184,6 @@ class GA:
             
             population = new_population
             
-        return population
+        # Ensure best is at index 0 (population is sorted by NSGA-II logic already)
+        best_overall = population[0] if population else None
+        return best_overall, population

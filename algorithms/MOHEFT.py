@@ -8,11 +8,14 @@ class MOHEFT:
         self.population_size = population_size
         self.generation_count = generation_count
         self.data = data
-        self.num_tasks = self.data['User'].count()
+        
+        # Robust Task Counting
+        self.all_tasks = get_all_tasks(data)
+        self.num_tasks = len(self.all_tasks)
         self.num_resources = self.data['EdgeServer'].count()
         self.gene_size = self.num_tasks * self.num_resources
 
-    # --- NSGA-II Logic (Missing in original) ---
+    # --- NSGA-II Logic ---
     def dominates(self, fitness1, fitness2):
         return all(f1 <= f2 for f1, f2 in zip(fitness1, fitness2)) and any(f1 < f2 for f1, f2 in zip(fitness1, fitness2))
 
@@ -75,16 +78,14 @@ class MOHEFT:
         return population
 
     def tournament_selection(self, population):
-        # Requires rank and crowding_distance to be set
         a, b = random.sample(population, 2)
-        if not hasattr(a, 'rank'): return a # Safety fallback
+        if not hasattr(a, 'rank'): return a 
         
         if a.rank < b.rank: return a
         elif b.rank < a.rank: return b
         return a if a.crowding_distance > b.crowding_distance else b
 
     def crossover(self, p1, p2):
-        # FIX: Task-Aware Crossover
         c1, c2 = Individual(), Individual()
         c1.CInd = []
         c2.CInd = []
@@ -99,9 +100,10 @@ class MOHEFT:
         return c1, c2
 
     def mutation(self, individual):
-        # FIX: Task-Aware Mutation
+        if self.num_tasks == 0: return individual
+        
         new_genes = individual.CInd[:]
-        if random.random() < 0.2: # Higher mutation rate for MOHEFT
+        if random.random() < 0.2: 
             task_idx = random.randint(0, self.num_tasks - 1)
             new_server = random.randint(0, self.num_resources - 1)
             start = task_idx * self.num_resources
@@ -114,7 +116,6 @@ class MOHEFT:
         population = self.initialize_population()
         population = self.fitness(population, self.data)
         
-        # Initial Rank assignment
         fronts = self.non_dominated_sorting(population)
         for front in fronts: self.calculate_crowding_distance(front)
 
@@ -129,7 +130,6 @@ class MOHEFT:
             offspring = self.fitness(offspring, self.data)
             combined = population + offspring
             
-            # FIX: Use NSGA-II selection (Rank + Crowding) instead of Sum(Fitness)
             fronts = self.non_dominated_sorting(combined)
             new_population = []
             for front in fronts:
@@ -142,4 +142,5 @@ class MOHEFT:
                     break
             population = new_population
             
-        return population
+        best_overall = population[0] if population else None
+        return best_overall, population

@@ -1,4 +1,4 @@
-from config import Individual
+from config import Individual, get_all_tasks
 
 class OC:
     def __init__(self, fitness, data):
@@ -9,13 +9,18 @@ class OC:
         individual = Individual()
         individual.CInd = []
         edge_servers = self.data['EdgeServer'].all()
+        
+        # Robust task counting
+        all_tasks = get_all_tasks(self.data)
+        num_tasks = len(all_tasks)
+        num_servers = len(edge_servers)
+        
         cloud_index = 0
         for i, server in enumerate(edge_servers):
             if "Cloud" in server.model_name:
                 cloud_index = i
                 break
-        num_tasks = self.data['User'].count()
-        num_servers = len(edge_servers)
+        
         for _ in range(num_tasks):
             gene = [0] * num_servers
             gene[cloud_index] = 1
@@ -23,4 +28,4 @@ class OC:
         
         population = [individual]
         population = self.fitness(population, self.data)
-        return population
+        return population[0], population

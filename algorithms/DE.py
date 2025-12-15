@@ -9,7 +9,10 @@ class DE:
         self.population_size = population_size
         self.generation_count = generation_count
         self.data = data
-        self.num_tasks = self.data['User'].count()
+        
+        # Robust Task Counting
+        self.all_tasks = get_all_tasks(data)
+        self.num_tasks = len(self.all_tasks)
         self.num_resources = self.data['EdgeServer'].count()
         self.gene_len = self.num_tasks * self.num_resources
         
@@ -36,12 +39,10 @@ class DE:
         return np.array(individual.CInd, dtype=float)
 
     def run(self):
-        # 1. Initialize Vectors
         vectors = []
         population = []
         
         for _ in range(self.population_size):
-            # Random continuous vectors [0, 1]
             vec = np.random.rand(self.gene_len)
             vectors.append(vec)
             
@@ -51,20 +52,17 @@ class DE:
             
         population = self.fitness(population, self.data)
 
-        # 2. Evolution
         for _ in range(self.generation_count):
             new_population = []
             new_vectors = []
             
             for i in range(self.population_size):
-                # Mutation: Select 3 random distinct vectors
                 idxs = [idx for idx in range(self.population_size) if idx != i]
                 a, b, c = np.random.choice(idxs, 3, replace=False)
                 
                 target_vec = vectors[i]
                 donor_vec = vectors[a] + self.F * (vectors[b] - vectors[c])
                 
-                # Crossover (Binomial)
                 trial_vec = np.zeros_like(target_vec)
                 for j in range(self.gene_len):
                     if random.random() <= self.CR or j == random.randint(0, self.gene_len - 1):
@@ -72,21 +70,14 @@ class DE:
                     else:
                         trial_vec[j] = target_vec[j]
                 
-                # Create Trial Individual
                 trial_ind = Individual()
                 trial_ind.CInd = self.continuous_to_discrete(trial_vec)
                 
-                # Selection (Greedy)
-                # We need to evaluate the trial individual immediately
-                # Note: This is computationally expensive, so we usually evaluate the whole batch.
-                # For simplicity in this architecture, we will add to a temporary list.
                 new_population.append(trial_ind)
-                new_vectors.append(trial_vec) # Potential vector
+                new_vectors.append(trial_vec)
 
-            # Batch Evaluate
             new_population = self.fitness(new_population, self.data)
             
-            # Selection Step
             final_population = []
             final_vectors = []
             
@@ -104,4 +95,6 @@ class DE:
             population = final_population
             vectors = final_vectors
 
-        return population
+        # Find best based on score
+        best_overall = min(population, key=self.get_score) if population else None
+        return best_overall, population

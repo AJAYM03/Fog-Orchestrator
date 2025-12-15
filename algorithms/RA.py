@@ -7,26 +7,29 @@ class RA:
         self.population_size = population_size
         self.generation_count = generation_count
         self.data = data
+        
+        self.all_tasks = get_all_tasks(data)
+        self.num_tasks = len(self.all_tasks)
 
     def schedule(self):
         individual = Individual()
-        individual.CInd = [0] * (self.data['User'].count() * self.data['EdgeServer'].count())
+        num_servers = self.data['EdgeServer'].count()
+        individual.CInd = [0] * (self.num_tasks * num_servers)
 
-        task_size = self.data['EdgeServer'].count()
-
-        for task_idx in range(self.data['User'].count()):
-            start_idx = task_idx * task_size
-            assigned_resource = random.randint(0, task_size - 1)
-
-            individual.CInd[start_idx:start_idx + task_size] = [0] * task_size
+        for task_idx in range(self.num_tasks):
+            start_idx = task_idx * num_servers
+            assigned_resource = random.randint(0, num_servers - 1)
             individual.CInd[start_idx + assigned_resource] = 1
 
         return individual
 
     def run(self):
-        individual = self.schedule()
-
-        population = [individual]
+        population = [self.schedule() for _ in range(self.population_size)]
         evaluated_population = self.fitness(population, self.data)
+        
+        def get_score(ind):
+            if not ind.fitness or ind.fitness[0] == float('inf'): return float('inf')
+            return sum(ind.fitness)
 
-        return evaluated_population
+        best_overall = min(evaluated_population, key=get_score)
+        return best_overall, evaluated_population

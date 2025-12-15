@@ -9,8 +9,15 @@ class QIGA:
         self.population_size = population_size
         self.generation_count = generation_count
         self.data = data
-        # Rotation angle delta
-        self.theta = 0.05 * np.pi 
+        
+        # Robust Task Counting
+        self.all_tasks = get_all_tasks(data)
+        self.num_tasks = len(self.all_tasks)
+        self.num_resources = self.data['EdgeServer'].count()
+        
+        # Quantum Parameters
+        self.theta = 0.05 * np.pi  
+        self.mutation_rate = 0.01 
 
     # --- NSGA-II Helpers ---
     def dominates(self, fitness1, fitness2):
@@ -29,6 +36,7 @@ class QIGA:
             if p.domination_count == 0:
                 p.rank = 0
                 fronts[0].append(p)
+        
         i = 0
         while len(fronts[i]) > 0:
             next_front = []
@@ -53,114 +61,116 @@ class QIGA:
             front[-1].crowding_distance = float('inf')
             min_v, max_v = front[0].fitness[m], front[-1].fitness[m]
             if max_v == min_v: continue
+            norm = max_v - min_v
             for i in range(1, len(front)-1):
-                front[i].crowding_distance += (front[i+1].fitness[m] - front[i-1].fitness[m]) / (max_v - min_v)
+                front[i].crowding_distance += (front[i+1].fitness[m] - front[i-1].fitness[m]) / norm
 
     # --- Quantum Operations ---
 
     def _initialize_population(self):
-        # Create one Quantum Individual (The "Mind")
-        # Standard QIGA evolves ONE probability vector, samples N times.
-        num_qubits = self.data['User'].count() * self.data['EdgeServer'].count()
+        num_qubits = self.num_tasks * self.num_resources
         q_ind = []
         for _ in range(num_qubits):
-            # Start in Superposition (Equal probability)
             q_ind.append(np.array([[1/np.sqrt(2)], [1/np.sqrt(2)]]))
         return q_ind
 
     def _measure(self, q_ind):
-        # Generate classical population from Q-state
         classical_pop = []
-        num_servers = self.data['EdgeServer'].count()
-        
         for _ in range(self.population_size):
             ind = Individual()
             ind.CInd = []
             
-            # Collapse Wavefunction
-            # For scheduling, we process blocks of qubits per task
-            for i in range(0, len(q_ind), num_servers):
-                task_qubits = q_ind[i:i+num_servers]
+            for i in range(0, len(q_ind), self.num_resources):
+                task_qubits = q_ind[i : i + self.num_resources]
                 
-                # Probabilities |beta|^2
+                # Extract Probabilities (|beta|^2)
                 probs = np.array([np.abs(q[1][0])**2 for q in task_qubits]).flatten()
                 
                 # Normalize
-                if probs.sum() == 0: probs = np.ones(len(probs))/len(probs)
-                else: probs = probs / probs.sum()
+                if probs.sum() == 0: 
+                    probs = np.ones(len(probs)) / len(probs)
+                else: 
+                    probs = probs / probs.sum()
                 
-                # Select Resource
-                chosen = np.random.choice(len(probs), p=probs)
+                # Selection
+                chosen_server = np.random.choice(len(probs), p=probs)
                 
-                # One-hot
-                gene = [0]*num_servers
-                gene[chosen] = 1
+                gene = [0] * self.num_resources
+                gene[chosen_server] = 1
                 ind.CInd.extend(gene)
-                
             classical_pop.append(ind)
         return classical_pop
 
     def _update_quantum_gates(self, q_ind, best_solution):
-        # Steer the Qubits towards the best solution
+        if best_solution is None: return q_ind
+
         for i in range(len(q_ind)):
-            target_bit = best_solution.CInd[i] # 0 or 1
-            
+            # 1. Quantum Mutation
+            if random.random() < self.mutation_rate:
+                random_angle = random.uniform(-0.1 * np.pi, 0.1 * np.pi)
+                rot_mut = np.array([[np.cos(random_angle), -np.sin(random_angle)],
+                                    [np.sin(random_angle), np.cos(random_angle)]])
+                q_ind[i] = np.dot(rot_mut, q_ind[i])
+                norm = np.linalg.norm(q_ind[i])
+                q_ind[i] = q_ind[i] / norm
+                continue
+
+            # 2. Steering
+            target_bit = best_solution.CInd[i]
             alpha = q_ind[i][0][0]
             beta = q_ind[i][1][0]
             
-            # Determine rotation direction
-            # If target is 1, we want to increase beta (probability of 1)
-            # If target is 0, we want to increase alpha (probability of 0)
-            
+            # Stability Check
+            if target_bit == 1 and abs(beta)**2 > 0.99: continue
+            if target_bit == 0 and abs(alpha)**2 > 0.99: continue
+
             direction = 0
             if target_bit == 1:
-                # Rotate towards |1>
-                direction = 1 if alpha * beta > 0 else -1 
+                if abs(alpha * beta) < 1e-9: direction = 1 
+                else: direction = 1 if alpha * beta > 0 else -1 
             else:
-                # Rotate towards |0>
-                direction = -1 if alpha * beta > 0 else 1
+                if abs(alpha * beta) < 1e-9: direction = -1
+                else: direction = -1 if alpha * beta > 0 else 1
             
             theta = direction * self.theta
             
-            # Rotation Matrix
             rot = np.array([[np.cos(theta), -np.sin(theta)],
                             [np.sin(theta), np.cos(theta)]])
-            
             q_ind[i] = np.dot(rot, q_ind[i])
+            
+            # Normalization Fix
+            norm = np.linalg.norm(q_ind[i])
+            q_ind[i] = q_ind[i] / norm
             
         return q_ind
 
     def run(self):
-        # 1. Initialize Quantum State (The "Mind")
         q_ind = self._initialize_population()
-        
         best_overall = None
+        classical_pop = []
         
         for _ in range(self.generation_count):
-            # 2. Measurement (Generate Classical Solutions)
             classical_pop = self._measure(q_ind)
-            
-            # 3. Evaluation
             classical_pop = self.fitness(classical_pop, self.data)
             
-            # 4. Sorting to find Best
             fronts = self.non_dominated_sorting(classical_pop)
             self.calculate_crowding_distance(fronts[0])
             fronts[0].sort(key=lambda x: x.crowding_distance, reverse=True)
-            
             best_current = fronts[0][0]
             
-            # Update global best (Simple elitism)
-            if best_overall is None or self.dominates(best_current.fitness, best_overall.fitness):
+            if best_overall is None:
                 best_overall = copy.deepcopy(best_current)
-            elif self.dominates(best_overall.fitness, best_current.fitness):
-                pass # Keep old best
-            else:
-                # Nondominated, maybe keep random or based on sparsity
-                if random.random() < 0.5: best_overall = copy.deepcopy(best_current)
+            elif self.dominates(best_current.fitness, best_overall.fitness):
+                best_overall = copy.deepcopy(best_current)
+            elif not self.dominates(best_overall.fitness, best_current.fitness):
+                if random.random() < 0.3:
+                    best_overall = copy.deepcopy(best_current)
 
-            # 5. Quantum Update (Steering)
-            # Rotate Q-state towards the best solution found
             q_ind = self._update_quantum_gates(q_ind, best_overall)
 
-        return classical_pop
+        if best_overall:
+            # Ensure best_overall is part of the final returned population for stats
+            if best_overall not in classical_pop:
+                classical_pop.append(best_overall)
+        
+        return best_overall, classical_pop
