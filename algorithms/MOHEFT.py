@@ -14,6 +14,10 @@ class MOHEFT:
         self.num_tasks = len(self.all_tasks)
         self.num_resources = self.data['EdgeServer'].count()
         self.gene_size = self.num_tasks * self.num_resources
+        
+        # Cache for seeding
+        self.servers = self.data['EdgeServer'].all()
+        self.server_costs = [s.power_model_parameters.get('monetary_cost', 0) for s in self.servers]
 
     # --- NSGA-II Logic ---
     def dominates(self, fitness1, fitness2):
@@ -63,10 +67,28 @@ class MOHEFT:
             for i in range(1, len(front) - 1):
                 front[i].crowding_distance += (front[i+1].fitness[m] - front[i-1].fitness[m]) / norm
 
+    # --- Seeding ---
+    def _generate_heuristic_seed(self):
+        """Creates a single solution optimized purely for COST."""
+        ind = Individual()
+        ind.CInd = []
+        cheapest_idx = self.server_costs.index(min(self.server_costs))
+        
+        for _ in range(self.num_tasks):
+            gene = [0] * self.num_resources
+            gene[cheapest_idx] = 1
+            ind.CInd.extend(gene)
+        return ind
+
     # --- Core Methods ---
     def initialize_population(self):
         population = []
-        for _ in range(self.population_size):
+        
+        # Inject Seed
+        seed = self._generate_heuristic_seed()
+        population.append(seed)
+        
+        for _ in range(self.population_size - 1):
             individual = Individual()
             individual.CInd = []
             for _ in range(self.num_tasks):

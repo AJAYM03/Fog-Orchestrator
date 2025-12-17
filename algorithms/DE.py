@@ -18,6 +18,10 @@ class DE:
         
         self.F = 0.5  # Mutation factor
         self.CR = 0.7 # Crossover probability
+        
+        # Cache for seeding
+        self.servers = self.data['EdgeServer'].all()
+        self.server_costs = [s.power_model_parameters.get('monetary_cost', 0) for s in self.servers]
 
     def get_score(self, individual):
         if not individual.fitness or individual.fitness[0] == float('inf'): return float('inf')
@@ -38,11 +42,30 @@ class DE:
     def discrete_to_continuous(self, individual):
         return np.array(individual.CInd, dtype=float)
 
+    def _generate_heuristic_seed_vector(self):
+        """Creates a vector representation of the Cheapest Server assignment."""
+        vec = np.zeros(self.gene_len)
+        cheapest_idx = self.server_costs.index(min(self.server_costs))
+        
+        for i in range(self.num_tasks):
+            start = i * self.num_resources
+            # Set probability of cheapest server to 1.0, others 0.0
+            vec[start + cheapest_idx] = 1.0 
+        return vec
+
     def run(self):
         vectors = []
         population = []
         
-        for _ in range(self.population_size):
+        # Seed initialization
+        seed_vec = self._generate_heuristic_seed_vector()
+        vectors.append(seed_vec)
+        seed_ind = Individual()
+        seed_ind.CInd = self.continuous_to_discrete(seed_vec)
+        population.append(seed_ind)
+        
+        # Fill rest of population
+        for _ in range(self.population_size - 1):
             vec = np.random.rand(self.gene_len)
             vectors.append(vec)
             

@@ -15,9 +15,15 @@ class QIGA:
         self.num_tasks = len(self.all_tasks)
         self.num_resources = self.data['EdgeServer'].count()
         
-        # Quantum Parameters
-        self.theta = 0.05 * np.pi  
+        # Quantum Parameters (Adaptive - Matching HybridQIGA for Fairness)
+        self.initial_theta = 0.05 * np.pi
+        self.min_theta = 0.01 * np.pi
+        self.theta = self.initial_theta 
         self.mutation_rate = 0.01 
+        
+        # Cache for seeding
+        self.servers = self.data['EdgeServer'].all()
+        self.server_costs = [s.power_model_parameters.get('monetary_cost', 0) for s in self.servers]
 
     # --- NSGA-II Helpers ---
     def dominates(self, fitness1, fitness2):
@@ -65,6 +71,19 @@ class QIGA:
             for i in range(1, len(front)-1):
                 front[i].crowding_distance += (front[i+1].fitness[m] - front[i-1].fitness[m]) / norm
 
+    # --- Seeding ---
+    def _generate_heuristic_seed(self):
+        """Creates a single solution optimized purely for COST."""
+        ind = Individual()
+        ind.CInd = []
+        cheapest_idx = self.server_costs.index(min(self.server_costs))
+        
+        for _ in range(self.num_tasks):
+            gene = [0] * self.num_resources
+            gene[cheapest_idx] = 1
+            ind.CInd.extend(gene)
+        return ind
+
     # --- Quantum Operations ---
 
     def _initialize_population(self):
@@ -101,8 +120,12 @@ class QIGA:
             classical_pop.append(ind)
         return classical_pop
 
-    def _update_quantum_gates(self, q_ind, best_solution):
+    def _update_quantum_gates(self, q_ind, best_solution, current_gen):
         if best_solution is None: return q_ind
+
+        # Adaptive Decay: Linearly decrease rotation angle (SAME AS HYBRIDQIGA)
+        decay_factor = 1 - (current_gen / self.generation_count)
+        self.theta = self.min_theta + (self.initial_theta - self.min_theta) * decay_factor
 
         for i in range(len(q_ind)):
             # 1. Quantum Mutation
@@ -132,10 +155,10 @@ class QIGA:
                 if abs(alpha * beta) < 1e-9: direction = -1
                 else: direction = -1 if alpha * beta > 0 else 1
             
-            theta = direction * self.theta
+            rotation_angle = direction * self.theta
             
-            rot = np.array([[np.cos(theta), -np.sin(theta)],
-                            [np.sin(theta), np.cos(theta)]])
+            rot = np.array([[np.cos(rotation_angle), -np.sin(rotation_angle)],
+                            [np.sin(rotation_angle), np.cos(rotation_angle)]])
             q_ind[i] = np.dot(rot, q_ind[i])
             
             # Normalization Fix
@@ -146,10 +169,16 @@ class QIGA:
 
     def run(self):
         q_ind = self._initialize_population()
-        best_overall = None
+        
+        # --- SEEDING ---
+        seed_ind = self._generate_heuristic_seed()
+        seeded_pop = self.fitness([seed_ind], self.data)
+        best_overall = copy.deepcopy(seeded_pop[0])
+        # ---------------
+
         classical_pop = []
         
-        for _ in range(self.generation_count):
+        for gen in range(self.generation_count):
             classical_pop = self._measure(q_ind)
             classical_pop = self.fitness(classical_pop, self.data)
             
@@ -166,10 +195,10 @@ class QIGA:
                 if random.random() < 0.3:
                     best_overall = copy.deepcopy(best_current)
 
-            q_ind = self._update_quantum_gates(q_ind, best_overall)
+            # Pass 'gen' for adaptive theta
+            q_ind = self._update_quantum_gates(q_ind, best_overall, gen)
 
         if best_overall:
-            # Ensure best_overall is part of the final returned population for stats
             if best_overall not in classical_pop:
                 classical_pop.append(best_overall)
         

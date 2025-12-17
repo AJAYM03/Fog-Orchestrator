@@ -15,8 +15,14 @@ class HybridQIGA:
         self.num_tasks = len(self.all_tasks)
         self.num_resources = self.data['EdgeServer'].count()
         
-        # Quantum Parameters
-        self.theta = 0.05 * np.pi 
+        # Quantum Parameters (Adaptive)
+        self.initial_theta = 0.05 * np.pi
+        self.min_theta = 0.01 * np.pi
+        self.theta = self.initial_theta 
+        
+        # Mutation Rate (Dynamic)
+        self.base_mutation_rate = 0.01
+        self.mutation_rate = self.base_mutation_rate
         
         # Cache Server Data
         self.servers = self.data['EdgeServer'].all()
@@ -109,9 +115,24 @@ class HybridQIGA:
             classical_pop.append(ind)
         return classical_pop
 
-    def _update_quantum_gates(self, q_ind, best_solution):
+    def _update_quantum_gates(self, q_ind, best_solution, current_gen):
         if best_solution is None: return q_ind
+        
+        # Adaptive Decay: Linearly decrease rotation angle
+        decay_factor = 1 - (current_gen / self.generation_count)
+        self.theta = self.min_theta + (self.initial_theta - self.min_theta) * decay_factor
+
         for i in range(len(q_ind)):
+            # Quantum Mutation (Dynamic)
+            if random.random() < self.mutation_rate:
+                random_angle = random.uniform(-0.1 * np.pi, 0.1 * np.pi)
+                rot_mut = np.array([[np.cos(random_angle), -np.sin(random_angle)],
+                                    [np.sin(random_angle), np.cos(random_angle)]])
+                q_ind[i] = np.dot(rot_mut, q_ind[i])
+                norm = np.linalg.norm(q_ind[i])
+                q_ind[i] = q_ind[i] / norm
+                continue
+
             target_bit = best_solution.CInd[i]
             alpha = q_ind[i][0][0]
             beta = q_ind[i][1][0]
@@ -135,52 +156,101 @@ class HybridQIGA:
             
         return q_ind
 
-    # --- POLYMORPHIC REPAIR MECHANISM ---
+    def _generate_heuristic_seed(self):
+        """Creates a single solution optimized purely for COST to seed the algorithm."""
+        ind = Individual()
+        ind.CInd = []
+        
+        # Pre-calculate cheapest resource index
+        cheapest_idx = self.server_costs.index(min(self.server_costs))
+        
+        for _ in range(self.num_tasks):
+            gene = [0] * self.num_resources
+            gene[cheapest_idx] = 1 # Force assignment to cheapest server
+            ind.CInd.extend(gene)
+        return ind
+
+    # --- CONDITIONAL SMART REPAIR MECHANISM ---
     
     def repair_population(self, population):
+        graph = self.data.get('graph', {})
+        
         for ind in population:
-            server_processing_loads = [0.0] * self.num_resources
-            task_assignments = [-1] * self.num_tasks
+            # Decode to get current assignment and objects
+            resources_map = decode(self.data, ind)
             
-            for t in range(self.num_tasks):
-                start = t * self.num_resources
-                end = start + self.num_resources
-                segment = ind.CInd[start:end]
-                try:
-                    s_idx = segment.index(1)
-                    task_assignments[t] = s_idx
-                    if self.server_freqs[s_idx] > 0:
-                        load_impact = self.task_weights[t] / self.server_freqs[s_idx]
-                        server_processing_loads[s_idx] += load_impact
-                    else:
-                        server_processing_loads[s_idx] += 1e9 
-                except ValueError:
-                    pass
+            for resource, task_dicts in resources_map.items():
+                if not task_dicts: continue
+                
+                # Get Resource Info
+                r_idx = -1
+                for idx, s in enumerate(self.servers):
+                    if s.id == resource.id: 
+                        r_idx = idx
+                        break
+                
+                if r_idx == -1: continue # Should not happen
+                
+                av_freq = self.server_freqs[r_idx]
+                r_bs_id = resource.base_station.id
+                
+                for t_dict in task_dicts:
+                    t_service = t_dict['service']
+                    t_user = t_dict['user']
+                    u_bs_id = t_user.base_station.id
+                    
+                    # 1. Identify Task Index in Genome (to flip bits)
+                    # We match by service object identity
+                    task_index = -1
+                    for i, item in enumerate(self.all_tasks):
+                        if item['service'] == t_service:
+                            task_index = i
+                            break
+                    
+                    if task_index == -1: continue
 
-            max_load = max(server_processing_loads)
-            max_s_idx = server_processing_loads.index(max_load)
-            
-            tasks_on_bottleneck = [t for t, s in enumerate(task_assignments) if s == max_s_idx]
-            
-            if tasks_on_bottleneck:
-                task_to_move = random.choice(tasks_on_bottleneck)
-                weight = self.task_weights[task_to_move]
-                best_target = -1
-                
-                if weight > self.avg_task_weight * 1.2:
-                    candidates = [s for s in range(self.num_resources) if s != max_s_idx]
-                    if candidates:
-                        best_target = max(candidates, key=lambda s: self.server_freqs[s])
-                else:
-                    candidates = [s for s in range(self.num_resources) 
-                                  if s != max_s_idx and server_processing_loads[s] < max_load]
-                    if candidates:
-                        best_target = min(candidates, key=lambda s: self.server_costs[s])
-                
-                if best_target != -1:
-                    start = task_to_move * self.num_resources
-                    ind.CInd[start + max_s_idx] = 0
-                    ind.CInd[start + best_target] = 1
+                    # 2. Check Constraints (Deadline)
+                    exe_delay = get_exe_delay(av_freq, t_service.weight)
+                    path_delay = get_path_delay(r_bs_id, u_bs_id, t_service.data_size, self.data, graph)
+                    total_delay = exe_delay + path_delay
+                    
+                    best_target = -1
+                    
+                    # --- DEADLINE VIOLATION REPAIR ---
+                    if total_delay > t_service.deadline:
+                        # Constraint Violated! Determine Bottleneck.
+                        
+                        if path_delay > exe_delay:
+                            # Network Bottleneck: Move to CLOSEST server (Same BS)
+                            candidates = [s for s in range(self.num_resources) 
+                                          if self.servers[s].base_station.id == u_bs_id]
+                            
+                            if candidates:
+                                # Pick random local server (e.g., Raspberry Pi at edge)
+                                best_target = random.choice(candidates)
+                            else:
+                                # No local server? Try to find any server with minimal path delay?
+                                # Fallback: Just maximize frequency to compensate
+                                best_target = max(range(self.num_resources), key=lambda s: self.server_freqs[s])
+                        
+                        else:
+                            # Compute Bottleneck: Move to FASTEST server (Cloud)
+                            best_target = max(range(self.num_resources), key=lambda s: self.server_freqs[s])
+
+                    # --- COST OPTIMIZATION (Only if Deadline Met) ---
+                    else:
+                        current_cost = self.server_costs[r_idx]
+                        min_cost = min(self.server_costs)
+                        
+                        # If we are on an expensive node (Cloud) but task is light
+                        if current_cost > min_cost * 2.0 and t_service.weight < self.avg_task_weight:
+                             best_target = min(range(self.num_resources), key=lambda s: self.server_costs[s])
+
+                    # 3. Apply Gene Flip if Target Found
+                    if best_target != -1 and best_target != r_idx:
+                        start = task_index * self.num_resources
+                        ind.CInd[start + r_idx] = 0
+                        ind.CInd[start + best_target] = 1
                         
         return population
 
@@ -188,13 +258,28 @@ class HybridQIGA:
 
     def run(self):
         q_ind = self._initialize_population()
-        best_overall = None
+        
+        # --- SEEDING ---
+        seed_ind = self._generate_heuristic_seed()
+        seeded_pop = self.fitness([seed_ind], self.data)
+        best_overall = copy.deepcopy(seeded_pop[0])
+        # ---------------
+
         classical_pop = []
         
-        for _ in range(self.generation_count):
+        for gen in range(self.generation_count):
             classical_pop = self._measure(q_ind)
             classical_pop = self.repair_population(classical_pop)
             classical_pop = self.fitness(classical_pop, self.data)
+            
+            # --- DIVERSITY CHECK (Dynamic Mutation) ---
+            # If all individuals have similar costs, boost mutation
+            unique_costs = len(set(ind.cost for ind in classical_pop))
+            if unique_costs < 5:
+                self.mutation_rate = 0.05 # Boost
+            else:
+                self.mutation_rate = self.base_mutation_rate
+            # ------------------------------------------
             
             fronts = self.non_dominated_sorting(classical_pop)
             self.calculate_crowding_distance(fronts[0])
@@ -209,7 +294,8 @@ class HybridQIGA:
                 if random.random() < 0.3:
                     best_overall = copy.deepcopy(best_current)
 
-            q_ind = self._update_quantum_gates(q_ind, best_overall)
+            # Pass 'gen' to the update function
+            q_ind = self._update_quantum_gates(q_ind, best_overall, gen)
 
         if best_overall:
             if best_overall not in classical_pop:

@@ -18,6 +18,10 @@ class PSO:
         self.w = 0.5 
         self.c1 = 1.5 
         self.c2 = 1.5 
+        
+        # Cache for seeding
+        self.servers = self.data['EdgeServer'].all()
+        self.server_costs = [s.power_model_parameters.get('monetary_cost', 0) for s in self.servers]
 
     def get_score(self, individual):
         if not individual.fitness or individual.fitness[0] == float('inf'): return float('inf')
@@ -39,13 +43,26 @@ class PSO:
             c_ind.extend(gene)
         return c_ind
 
+    def _generate_heuristic_seed(self):
+        ind = Individual()
+        ind.CInd = []
+        cheapest_idx = self.server_costs.index(min(self.server_costs))
+        for _ in range(self.num_tasks):
+            gene = [0] * self.num_resources
+            gene[cheapest_idx] = 1
+            ind.CInd.extend(gene)
+        return ind
+
     def run(self):
         particles = []
         velocities = []
-        p_best = []
-        p_best_scores = []
         
-        for _ in range(self.population_size):
+        # Seed initialization
+        seed_ind = self._generate_heuristic_seed()
+        particles.append(seed_ind)
+        velocities.append(np.zeros(len(seed_ind.CInd))) # Zero velocity for seed
+        
+        for _ in range(self.population_size - 1):
             ind = Individual()
             ind.CInd = []
             for _ in range(self.num_tasks):

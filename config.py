@@ -6,6 +6,13 @@ from collections import deque
 K_POP_SIZE = 32
 K_GEN_SIZE = 60
 
+# --- OPTIMIZATION WEIGHTS ---
+# RECOMMENDED BALANCED SET for "Smart" Repair validation
+# We punish Cost (0.5) heavily because the Repair logic will now protecting Latency (0.4)
+W_ENERGY = 0.1
+W_LATENCY = 0.4
+W_COST = 0.5 
+
 class Individual:
     def __init__(self):
         self.QInd = []
@@ -177,12 +184,18 @@ def fitness(population, data):
     min_c, max_c = min(cost_values), max(cost_values)
 
     for individual in population:
-        norm_e = (individual.energy - min_e)/(max_e - min_e) if max_e > min_e else 0.5
-        norm_l = (individual.latency - min_l)/(max_l - min_l) if max_l > min_l else 0.5
-        norm_c = (individual.cost - min_c)/(max_c - min_c) if max_c > min_c else 0.5
+        norm_e = (individual.energy - min_e)/(max_e - min_e) if max_e > min_e else 0.0
+        norm_l = (individual.latency - min_l)/(max_l - min_l) if max_l > min_l else 0.0
+        norm_c = (individual.cost - min_c)/(max_c - min_c) if max_c > min_c else 0.0
         
         # Weighted penalty integration
         penalty = (individual.missed_deadlines * 1.0) + (100.0 if individual.mem_overload else 0.0)
-        individual.fitness = [norm_e + penalty, norm_l + penalty, norm_c + penalty]
+        
+        # --- APPLY WEIGHTS ---
+        individual.fitness = [
+            (norm_e * W_ENERGY) + penalty, 
+            (norm_l * W_LATENCY) + penalty, 
+            (norm_c * W_COST) + penalty
+        ]
 
     return population
