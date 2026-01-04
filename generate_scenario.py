@@ -86,7 +86,8 @@ cloud_server.cpu = 1000
 cloud_server.memory = 999999
 cloud_server.disk = 999999
 cloud_server.power_model_parameters = {
-    "static_power_percentage": 200,
+    "max_power_consumption": 1000,
+    "static_power_percentage": 170,  # still > edge
     "monetary_cost": 10
 }
 edge_servers.append(cloud_server)
