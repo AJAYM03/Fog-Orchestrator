@@ -4,13 +4,14 @@ import glob
 import re
 import argparse
 import json
-from algorithms import QIGA, MOHEFT, RR, RA, OE, OC, GA, PSO, DE, HybridQIGA
-from config import *
 import pandas as pd
+from config import *
+
+# Import your algorithms
+from algorithms import QIGA, MOHEFT, RR, RA, OE, OC, GA, PSO, DE, HybridQIGA, SQIGA, SHybridQIGA
 
 # --- Step 1: Define Your Experiment Parameters ---
-NUM_RUNS = 5
-
+NUM_RUNS = 5 
 # -------------------------------------------
 
 # --- Helper Functions ---
@@ -27,6 +28,10 @@ def individual_to_dict(ind):
     }
 
 def save_population(scenario_name, run_id, algorithm_name, best_individuals, data):
+    if not best_individuals:
+        print(f"Warning: No population returned for {algorithm_name}")
+        return
+
     output_dir = f"scheme/outputs/{scenario_name}/run_{run_id}/"
     os.makedirs(output_dir, exist_ok=True)
     
@@ -71,6 +76,7 @@ if __name__ == "__main__":
     filename_regex = re.compile(r"datasets[/\\](.+)_ES-(\d+)_ED-(\d+)\.json")
 
     for file_path in dataset_files:
+        # Robust Filename Parsing
         match = filename_regex.search(file_path)
         if not match:
             filename = os.path.basename(file_path)
@@ -82,6 +88,7 @@ if __name__ == "__main__":
 
         scenario_name = match.group(1)
         
+        # Dashboard Filtering Logic
         if args.scenarios and scenario_name not in args.scenarios:
             continue
 
@@ -101,10 +108,12 @@ if __name__ == "__main__":
                 print(f"[Error] Could not load file: {file_path}")
                 break 
 
+            # Prepare Data Dictionary
             data = {
                 'BaseStation': BaseStation, 'EdgeServer': EdgeServer, 'User': User,
                 'NetworkSwitch': NetworkSwitch, 'NetworkLink': NetworkLink
             }
+            # Build Graph for Routing
             graph = {}
             for link in data['NetworkLink'].all():
                 node1_id = link.nodes[0].base_station.id
@@ -113,31 +122,36 @@ if __name__ == "__main__":
                 graph.setdefault(node2_id, []).append((node1_id, link.bandwidth))
             data['graph'] = graph
 
-            # Run Algorithms
+            # --- RUN ALGORITHMS ---
+
             print(f'Running QIGA...')
             QIGA_alg = QIGA.QIGA(fitness, K_POP_SIZE, K_GEN_SIZE, data)
             best_qiga, QIGA_pop = QIGA_alg.run()
-            # Insert best at start for save_population
-            if best_qiga not in QIGA_pop: QIGA_pop.insert(0, best_qiga)
-            elif QIGA_pop[0] != best_qiga:
-                QIGA_pop.remove(best_qiga)
-                QIGA_pop.insert(0, best_qiga)
+            if best_qiga and best_qiga not in QIGA_pop: QIGA_pop.insert(0, best_qiga)
             save_population(scenario_name, run_id, "QIGA", QIGA_pop, data)
 
             print(f'Running HybridQIGA...')
             HybridQIGA_alg = HybridQIGA.HybridQIGA(fitness, K_POP_SIZE, K_GEN_SIZE, data)
             best_hqiga, HybridQIGA_pop = HybridQIGA_alg.run()
-            if best_hqiga not in HybridQIGA_pop: HybridQIGA_pop.insert(0, best_hqiga)
-            elif HybridQIGA_pop[0] != best_hqiga:
-                HybridQIGA_pop.remove(best_hqiga)
-                HybridQIGA_pop.insert(0, best_hqiga)
+            if best_hqiga and best_hqiga not in HybridQIGA_pop: HybridQIGA_pop.insert(0, best_hqiga)
             save_population(scenario_name, run_id, "HybridQIGA", HybridQIGA_pop, data)
 
             print(f'Running MOHEFT...')
             MOHEFT_alg = MOHEFT.MOHEFT(fitness, K_POP_SIZE, K_GEN_SIZE, data)
             best_moheft, MOHEFT_pop = MOHEFT_alg.run()
-            if best_moheft and best_moheft not in MOHEFT_pop: MOHEFT_pop.insert(0, best_moheft)
             save_population(scenario_name, run_id, "MOHEFT", MOHEFT_pop, data)
+
+            print(f'Running SQIGA...')
+            SQIGA_alg = SQIGA.SQIGA(fitness, K_POP_SIZE, K_GEN_SIZE, data)
+            best_sqiga, SQIGA_pop = SQIGA_alg.run()
+            if best_sqiga and best_sqiga not in SQIGA_pop: SQIGA_pop.insert(0, best_sqiga)
+            save_population(scenario_name, run_id, "SQIGA", SQIGA_pop, data)
+
+            print(f'Running SHybridQIGA...')
+            SHybridQIGA_alg = SHybridQIGA.SHybridQIGA(fitness, K_POP_SIZE, K_GEN_SIZE, data)
+            best_shybridqiga, SHybridQIGA_pop = SHybridQIGA_alg.run()
+            if best_shybridqiga and best_shybridqiga not in SHybridQIGA_pop: SHybridQIGA_pop.insert(0, best_shybridqiga)
+            save_population(scenario_name, run_id, "SHybridQIGA", SHybridQIGA_pop, data)
 
             print(f'Running GA...')
             GA_alg = GA.GA(fitness, K_POP_SIZE, K_GEN_SIZE, data)
@@ -148,19 +162,13 @@ if __name__ == "__main__":
             print(f'Running PSO...')
             PSO_alg = PSO.PSO(fitness, K_POP_SIZE, K_GEN_SIZE, data)
             best_pso, PSO_pop = PSO_alg.run()
-            if best_pso not in PSO_pop: PSO_pop.insert(0, best_pso)
-            elif PSO_pop[0] != best_pso:
-                PSO_pop.remove(best_pso)
-                PSO_pop.insert(0, best_pso)
+            if best_pso and best_pso not in PSO_pop: PSO_pop.insert(0, best_pso)
             save_population(scenario_name, run_id, "PSO", PSO_pop, data)
 
             print(f'Running DE...')
             DE_alg = DE.DE(fitness, K_POP_SIZE, K_GEN_SIZE, data)
             best_de, DE_pop = DE_alg.run()
-            if best_de not in DE_pop: DE_pop.insert(0, best_de)
-            elif DE_pop[0] != best_de:
-                DE_pop.remove(best_de)
-                DE_pop.insert(0, best_de)
+            if best_de and best_de not in DE_pop: DE_pop.insert(0, best_de)
             save_population(scenario_name, run_id, "DE", DE_pop, data)
 
             print(f'Running RR...')
@@ -176,10 +184,6 @@ if __name__ == "__main__":
             print(f'Running OE...')
             OE_alg = OE.OE(fitness, K_POP_SIZE, K_GEN_SIZE, data)
             best_oe, OE_pop = OE_alg.run()
-            if best_oe not in OE_pop: OE_pop.insert(0, best_oe)
-            elif OE_pop[0] != best_oe:
-                OE_pop.remove(best_oe)
-                OE_pop.insert(0, best_oe)
             save_population(scenario_name, run_id, "OE", OE_pop, data)
 
             print(f'Running OC...')

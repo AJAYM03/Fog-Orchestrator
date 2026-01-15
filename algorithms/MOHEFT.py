@@ -1,168 +1,163 @@
 from config import *
-import random
+import numpy as np
 import copy
 
 class MOHEFT:
+    """
+    True MOHEFT (Multi-Objective Heterogeneous Earliest Finish Time).
+    
+    IMPROVED LOGIC:
+    1. Sorts tasks by Deadline (Earliest Deadline First).
+    2. Dynamic Memory Tracking: Checks capacity BEFORE assigning.
+    3. Local Normalization: Calculates relative quality of servers.
+    """
     def __init__(self, fitness, population_size, generation_count, data):
         self.fitness = fitness
-        self.population_size = population_size
-        self.generation_count = generation_count
         self.data = data
         
         # Robust Task Counting
         self.all_tasks = get_all_tasks(data)
         self.num_tasks = len(self.all_tasks)
-        self.num_resources = self.data['EdgeServer'].count()
-        self.gene_size = self.num_tasks * self.num_resources
         
-        # Cache for seeding
-        self.servers = self.data['EdgeServer'].all()
-        self.server_costs = [s.power_model_parameters.get('monetary_cost', 0) for s in self.servers]
-
-    # --- NSGA-II Logic ---
-    def dominates(self, fitness1, fitness2):
-        return all(f1 <= f2 for f1, f2 in zip(fitness1, fitness2)) and any(f1 < f2 for f1, f2 in zip(fitness1, fitness2))
-
-    def non_dominated_sorting(self, population):
-        fronts = [[]]
-        for p in population:
-            p.domination_count = 0
-            p.dominated_set = []
-            for q in population:
-                if self.dominates(p.fitness, q.fitness):
-                    p.dominated_set.append(q)
-                elif self.dominates(q.fitness, p.fitness):
-                    p.domination_count += 1
-            if p.domination_count == 0:
-                p.rank = 0
-                fronts[0].append(p)
+        # Freeze Server List (Must match config.py's decode order)
+        self.servers = list(self.data['EdgeServer'].all())
+        self.servers.sort(key=lambda s: s.id) # Deterministic Sort
+        self.num_resources = len(self.servers)
         
-        i = 0
-        while len(fronts[i]) > 0:
-            next_front = []
-            for p in fronts[i]:
-                for q in p.dominated_set:
-                    q.domination_count -= 1
-                    if q.domination_count == 0:
-                        q.rank = i + 1
-                        next_front.append(q)
-            i += 1
-            fronts.append(next_front)
-        
-        if not fronts[-1]: fronts.pop()
-        return fronts
-
-    def calculate_crowding_distance(self, front):
-        if not front: return
-        num_objectives = len(front[0].fitness)
-        for p in front: p.crowding_distance = 0
-        
-        for m in range(num_objectives):
-            front.sort(key=lambda x: x.fitness[m])
-            front[0].crowding_distance = float('inf')
-            front[-1].crowding_distance = float('inf')
-            min_fit, max_fit = front[0].fitness[m], front[-1].fitness[m]
-            if max_fit == min_fit: continue
-            norm = max_fit - min_fit
-            for i in range(1, len(front) - 1):
-                front[i].crowding_distance += (front[i+1].fitness[m] - front[i-1].fitness[m]) / norm
-
-    # --- Seeding ---
-    def _generate_heuristic_seed(self):
-        """Creates a single solution optimized purely for COST."""
-        ind = Individual()
-        ind.CInd = []
-        cheapest_idx = self.server_costs.index(min(self.server_costs))
-        
-        for _ in range(self.num_tasks):
-            gene = [0] * self.num_resources
-            gene[cheapest_idx] = 1
-            ind.CInd.extend(gene)
-        return ind
-
-    # --- Core Methods ---
-    def initialize_population(self):
-        population = []
-        
-        # Inject Seed
-        seed = self._generate_heuristic_seed()
-        population.append(seed)
-        
-        for _ in range(self.population_size - 1):
-            individual = Individual()
-            individual.CInd = []
-            for _ in range(self.num_tasks):
-                task_gene = [0] * self.num_resources
-                chosen_server = random.randint(0, self.num_resources - 1)
-                task_gene[chosen_server] = 1
-                individual.CInd.extend(task_gene)
-            population.append(individual)
-        return population
-
-    def tournament_selection(self, population):
-        a, b = random.sample(population, 2)
-        if not hasattr(a, 'rank'): return a 
-        
-        if a.rank < b.rank: return a
-        elif b.rank < a.rank: return b
-        return a if a.crowding_distance > b.crowding_distance else b
-
-    def crossover(self, p1, p2):
-        c1, c2 = Individual(), Individual()
-        c1.CInd = []
-        c2.CInd = []
-        for i in range(self.num_tasks):
-            start, end = i * self.num_resources, (i + 1) * self.num_resources
-            if random.random() < 0.5:
-                c1.CInd.extend(p1.CInd[start:end])
-                c2.CInd.extend(p2.CInd[start:end])
-            else:
-                c1.CInd.extend(p2.CInd[start:end])
-                c2.CInd.extend(p1.CInd[start:end])
-        return c1, c2
-
-    def mutation(self, individual):
-        if self.num_tasks == 0: return individual
-        
-        new_genes = individual.CInd[:]
-        if random.random() < 0.2: 
-            task_idx = random.randint(0, self.num_tasks - 1)
-            new_server = random.randint(0, self.num_resources - 1)
-            start = task_idx * self.num_resources
-            new_genes[start:start+self.num_resources] = [0] * self.num_resources
-            new_genes[start + new_server] = 1
-        individual.CInd = new_genes
-        return individual
+        # Pre-fetch static parameters
+        self.server_freqs = [get_freq(s.model_name, s) for s in self.servers]
 
     def run(self):
-        population = self.initialize_population()
-        population = self.fitness(population, self.data)
+        # 1. Sort Tasks by Deadline (Earliest First)
+        indexed_tasks = []
+        for i, t_dict in enumerate(self.all_tasks):
+            indexed_tasks.append({
+                'gene_index': i,
+                'user': t_dict['user'],
+                'service': t_dict['service']
+            })
+            
+        indexed_tasks.sort(key=lambda x: x['service'].deadline)
         
-        fronts = self.non_dominated_sorting(population)
-        for front in fronts: self.calculate_crowding_distance(front)
+        # Initialize Empty Individual
+        ind = Individual()
+        ind.CInd = [0] * (self.num_tasks * self.num_resources)
+        
+        # TRACKING: Keep track of what we put on each server
+        server_loads = {s.id: [] for s in self.servers}
+        
+        # 2. Greedy Construction Loop
+        for item in indexed_tasks:
+            task = item['service']
+            user = item['user']
+            gene_idx = item['gene_index']
+            
+            # Temporary storage for candidate metrics
+            candidates = []
+            
+            # A. Evaluate specific Task on EVERY Server
+            for s_idx, server in enumerate(self.servers):
+                
+                # --- MEMORY CHECK (The Fix) ---
+                # Check if adding this task would explode the server
+                current_load = server_loads[server.id]
+                if memory_is_overloaded(current_load + [item], server.memory):
+                    continue # Skip this server, it's full!
 
-        for _ in range(self.generation_count):
-            offspring = []
-            while len(offspring) < self.population_size:
-                p1 = self.tournament_selection(population)
-                p2 = self.tournament_selection(population)
-                c1, c2 = self.crossover(p1, p2)
-                offspring.extend([self.mutation(c1), self.mutation(c2)])
+                # --- Match Logic from fitness() ---
+                
+                # 1. Frequency
+                freq = self.server_freqs[s_idx]
+                
+                # 2. Delays (Optimistic mean)
+                predicted_weight = task.weight * 1.0 
+                exe_delay = get_exe_delay(freq, predicted_weight)
+                path_delay = get_path_delay(
+                    server.base_station.id, 
+                    user.base_station.id, 
+                    task.data_size, 
+                    self.data, 
+                    self.data.get('graph', {})
+                )
+                
+                total_delay = exe_delay + path_delay
+                
+                # 3. Energy
+                max_p = server.power_model_parameters.get('max_power_consumption', 0)
+                static_pct = server.power_model_parameters.get('static_power_percentage', 0) / 100.0
+                dynamic_power = max_p * (1.0 - static_pct)
+                total_energy = dynamic_power * exe_delay
+                
+                # 4. Cost
+                cost_rate = server.power_model_parameters.get('monetary_cost', 0)
+                total_cost = cost_rate * exe_delay
+                
+                candidates.append({
+                    'server_idx': s_idx,
+                    'server_obj': server,
+                    'energy': total_energy,
+                    'latency': total_delay,
+                    'cost': total_cost
+                })
+
+            # FALLBACK: If all servers are full (candidates empty), 
+            # we MUST pick one. We pick the cloud (or last server).
+            if not candidates:
+                # Find cloud or just pick last one
+                target_idx = self.num_resources - 1
+                for i, s in enumerate(self.servers):
+                    if "Cloud" in s.model_name:
+                        target_idx = i
+                        break
+                # Create a dummy candidate just to allow assignment
+                candidates.append({
+                    'server_idx': target_idx,
+                    'server_obj': self.servers[target_idx],
+                    'energy': 9999, 'latency': 9999, 'cost': 9999
+                })
+
+            # B. Local Normalization
+            energies = [c['energy'] for c in candidates]
+            latencies = [c['latency'] for c in candidates]
+            costs = [c['cost'] for c in candidates]
             
-            offspring = self.fitness(offspring, self.data)
-            combined = population + offspring
+            min_e, max_e = min(energies), max(energies)
+            min_l, max_l = min(latencies), max(latencies)
+            min_c, max_c = min(costs), max(costs)
             
-            fronts = self.non_dominated_sorting(combined)
-            new_population = []
-            for front in fronts:
-                self.calculate_crowding_distance(front)
-                front.sort(key=lambda x: x.crowding_distance, reverse=True)
-                if len(new_population) + len(front) <= self.population_size:
-                    new_population.extend(front)
-                else:
-                    new_population.extend(front[:self.population_size - len(new_population)])
-                    break
-            population = new_population
+            range_e = max_e - min_e if max_e > min_e else 1.0
+            range_l = max_l - min_l if max_l > min_l else 1.0
+            range_c = max_c - min_c if max_c > min_c else 1.0
             
-        best_overall = population[0] if population else None
-        return best_overall, population
+            # C. Pick Best Server
+            best_server_idx = -1
+            best_server_obj = None
+            best_score = float('inf')
+            
+            for c in candidates:
+                norm_e = (c['energy'] - min_e) / range_e
+                norm_l = (c['latency'] - min_l) / range_l
+                norm_c = (c['cost'] - min_c) / range_c
+                
+                score = (norm_e * W_ENERGY) + (norm_l * W_LATENCY) + (norm_c * W_COST)
+                
+                if c['latency'] > task.deadline:
+                    score += 1000.0 
+                
+                if score < best_score:
+                    best_score = score
+                    best_server_idx = c['server_idx']
+                    best_server_obj = c['server_obj']
+            
+            # D. Assign
+            start_bit = gene_idx * self.num_resources
+            ind.CInd[start_bit + best_server_idx] = 1
+            
+            # UPDATE TRACKING
+            server_loads[best_server_obj.id].append(item)
+
+        # 3. Final Evaluation
+        population = self.fitness([ind], self.data)
+        best_overall = population[0]
+        
+        return best_overall, [best_overall]

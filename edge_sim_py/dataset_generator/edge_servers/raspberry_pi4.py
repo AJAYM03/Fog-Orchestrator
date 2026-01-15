@@ -23,12 +23,12 @@ def raspberry_pi4() -> object:
     edge_server.cpu = 4
     edge_server.memory = 8192
     edge_server.disk = 32768
-    edge_server.frequency = 1.8 * 10e9
+    edge_server.frequency = 1.8 * 1e9
 
     # Power-related attributes
     edge_server.power_model_parameters = {
-        "max_power_consumption": 7.3,
-        "static_power_percentage": 2.56,
+         "max_power_consumption": 7.5,        # under full load
+        "static_power_percentage": 40
     }
 
     return edge_server

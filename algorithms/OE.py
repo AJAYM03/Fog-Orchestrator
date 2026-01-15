@@ -11,25 +11,34 @@ class OE:
         self.all_tasks = get_all_tasks(data)
         self.num_tasks = len(self.all_tasks)
 
+        # FIX: Freeze and Sort servers to match config.py logic exactly
+        self.servers = list(self.data['EdgeServer'].all())
+        self.servers.sort(key=lambda s: s.id)
+        self.num_resources = len(self.servers)
+
+        # Pre-calculate valid indices (Edge Nodes Only)
+        # We assume "Cloud" is in the model name for the cloud server
+        self.edge_indices = []
+        for i, s in enumerate(self.servers):
+            if "Cloud" not in s.model_name:
+                self.edge_indices.append(i)
+        
+        # Fallback: If no edge servers found (weird scenario), allow all
+        if not self.edge_indices:
+            self.edge_indices = list(range(self.num_resources))
+
     def schedule(self):
         individual = Individual()
-        num_servers = self.data['EdgeServer'].count()
-        individual.CInd = [0] * (self.num_tasks * num_servers)
+        individual.CInd = [0] * (self.num_tasks * self.num_resources)
 
-        edge_server_indices = []
-        all_servers = self.data['EdgeServer'].all()
-        for i, s in enumerate(all_servers):
-            if "Cloud" not in s.model_name:
-                edge_server_indices.append(i)
-        
-        if not edge_server_indices:
-            edge_server_indices = range(num_servers)
-
-        for i in range(self.num_tasks):
-            chosen_server_idx = random.choice(edge_server_indices)
-            gene_start = i * num_servers
-            bit_pos = gene_start + chosen_server_idx
-            individual.CInd[bit_pos] = 1
+        for task_idx in range(self.num_tasks):
+            start_idx = task_idx * self.num_resources
+            
+            # Pick a random VALID Edge Server
+            assigned_resource = random.choice(self.edge_indices)
+            
+            # Set the bit
+            individual.CInd[start_idx + assigned_resource] = 1
             
         return individual
 
@@ -37,7 +46,6 @@ class OE:
         population = [self.schedule() for _ in range(self.population_size)]
         evaluated_population = self.fitness(population, self.data)
         
-        # Helper to get score for sorting
         def get_score(ind):
             if not ind.fitness or ind.fitness[0] == float('inf'): return float('inf')
             return sum(ind.fitness)

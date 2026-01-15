@@ -23,12 +23,12 @@ def e5430() -> object:
     edge_server.cpu = 8
     edge_server.memory = 16384
     edge_server.disk = 131072
-    edge_server.frequency = 2.66 * 10e9
+    edge_server.frequency = 2.66 * 1e9
 
     # Power-related attributes
     edge_server.power_model_parameters = {
-        "max_power_consumption": 265,
-        "static_power_percentage": 166,
+        "max_power_consumption": 200,
+        "static_power_percentage": 55,
     }
 
     return edge_server

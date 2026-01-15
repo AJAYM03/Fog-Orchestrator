@@ -17,8 +17,9 @@ st.set_page_config(layout="wide", page_title="Fog Scheduler Digital Twin")
 # --- Configuration ---
 BASE_OUTPUT_DIR = "scheme/outputs"
 DATASET_DIR = "datasets"
-# Update this line at the top
-ALGORITHMS = ["HybridQIGA", "QIGA", "MOHEFT", "GA", "PSO", "DE", "RR", "RA", "OE", "OC"]
+# Updated algorithm list
+ALGORITHMS = ["HybridQIGA", "QIGA", "MOHEFT", "GA", "PSO", "DE", "RR", "RA", "OE", "OC","SQIGA","SHybridQIGA"]
+
 try:
     from main import NUM_RUNS
 except ImportError:
@@ -225,6 +226,13 @@ def load_and_process_data():
                 avg_energy=('Energy', 'mean'),
                 avg_latency=('Latency', 'mean')
             ).reset_index()
+            
+            # --- NEW: Calculate Weighted Score ---
+            # Formula: (0.1 * Energy) + (0.8 * Latency) + (0.1 * Cost)
+            final_avg_df['weighted_score'] = (final_avg_df['avg_energy'] * 0.1) + \
+                                             (final_avg_df['avg_latency'] * 0.8) + \
+                                             (final_avg_df['avg_cost'] * 0.1)
+            
             all_scenario_results[scenario] = final_avg_df
             
     return all_scenario_results
@@ -318,8 +326,13 @@ else:
             
             st.divider()
             st.markdown("### 📊 KPI Analysis")
-            c1, c2, c3 = st.columns(3)
+            
+            # --- UPDATED: 4 Columns to include Weighted Score ---
+            c1, c2, c3, c4 = st.columns(4)
             with c1: st.subheader("Cost"); st.bar_chart(results_df, x="Algorithm", y="avg_cost", color="#FF4B4B")
             with c2: st.subheader("Energy"); st.bar_chart(results_df, x="Algorithm", y="avg_energy", color="#00C0F2")
             with c3: st.subheader("Latency"); st.bar_chart(results_df, x="Algorithm", y="avg_latency", color="#00A968")
-            st.dataframe(results_df.sort_values(by=['avg_cost']))
+            with c4: st.subheader("Weighted Score"); st.bar_chart(results_df, x="Algorithm", y="weighted_score", color="#FFA500")
+            
+            # Show table sorted by Weighted Score
+            st.dataframe(results_df.sort_values(by=['weighted_score']))
