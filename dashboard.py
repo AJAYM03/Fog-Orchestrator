@@ -229,10 +229,10 @@ def load_and_process_data():
             
             # --- NEW: Calculate Weighted Score ---
             # Formula: (0.1 * Energy) + (0.8 * Latency) + (0.1 * Cost)
-            final_avg_df['weighted_score'] = (final_avg_df['avg_energy'] * 0.1) + \
-                                             (final_avg_df['avg_latency'] * 0.8) + \
+            final_avg_df['weighted_score'] = (final_avg_df['avg_energy'] * 0.2) + \
+                                             (final_avg_df['avg_latency'] * 0.7) + \
                                              (final_avg_df['avg_cost'] * 0.1)
-            
+        
             all_scenario_results[scenario] = final_avg_df
             
     return all_scenario_results
